@@ -1,0 +1,19 @@
+# Built/fetched at setup time — never committed
+/.build/
+/tools/
+/assets/
+/out/
+/dist/
+/dist-aot/
+
+# .NET build output
+**/bin/
+**/obj/
+
+# Scratch
+*.pkg
+*.iso
+*.7z
+*.zip
+*.rar
+*.gp4

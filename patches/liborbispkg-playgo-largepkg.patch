@@ -1,0 +1,28 @@
+PlayGo chunk-hash over-allocation fix for large (multi-GB) packages.
+
+LibOrbisPkg sizes the PLAYGO_CHUNK_SHA entry from an *estimate* of the package
+size, but the *final* package_size ends up larger due to alignment overhead. For
+multi-GB packages (any normal PS2 ISO) the required hash table is then bigger
+than the reserved space and the build aborts with:
+
+    Playgo Chunk hash file was not allocated enough space. Report this as a bug
+
+The final DataSize is reset to the exact required size later in BuildPkg, so
+over-allocating the estimate only leaves harmless padding. We bump the reserve
+by 0x10000 (covers ~1 GB of estimate drift; real drift is a few KB).
+
+File: LibOrbisPkg/PKG/PkgBuilder.cs  (in BuildPkg, the `entry == pkg.ChunkSha` branch)
+
+--- a/LibOrbisPkg/PKG/PkgBuilder.cs
++++ b/LibOrbisPkg/PKG/PkgBuilder.cs
+@@
+           // Add the size of the chunk SHAs, plus an extra 16 bytes for good measure
+           pkgSize += ((pkgSize + 16) / 0x10000) * 4;
+-          e.DataSize = (uint)(pkgSize / 0x10000L) * 4;
++          // Over-allocate by 64KB so the estimate never falls below the final
++          // package_size for large packages (see patches/ note). DataSize is reset
++          // to the exact size later, so the extra reservation is harmless padding.
++          e.DataSize = (uint)(pkgSize / 0x10000L) * 4 + 0x10000;
+
+setup.sh applies this transformation idempotently with sed; this file documents
+the change for humans and for upstreaming.

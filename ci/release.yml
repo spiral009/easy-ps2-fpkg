@@ -1,0 +1,73 @@
+name: release
+
+# Build multi-arch ps2fpkg binaries and attach them to a GitHub Release.
+# Triggers on a version tag (e.g. v1.0.0) or manually.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Reliable: self-contained single-file binaries for the common desktop/server arches.
+  selfcontained:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Fetch + patch LibOrbisPkg
+        run: bash scripts/fetch-liborbispkg.sh
+      - name: Build all arches
+        run: bash build-releases.sh linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selfcontained
+          path: |
+            dist/ps2fpkg-*
+            dist/SHA256SUMS.txt
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ps2fpkg-*
+            dist/SHA256SUMS.txt
+
+  # Experimental: a NativeAOT native binary for arm64 (the "download & run on Termux/Android" dream).
+  # Built natively on an arm64 runner inside Alpine (musl). Marked non-blocking: if the AOT/static
+  # toolchain bits aren't happy, the release above still ships. See README "Termux / Android".
+  aot-arm64:
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    container: alpine:3.20
+    steps:
+      - name: Install toolchain
+        run: |
+          apk add --no-cache bash git curl dotnet8-sdk clang lld build-base \
+            zlib-dev zlib-static openssl-dev openssl-libs-static icu-static
+      - uses: actions/checkout@v4
+      - name: Fetch + patch LibOrbisPkg
+        run: bash scripts/fetch-liborbispkg.sh
+      - name: Publish NativeAOT (linux-musl-arm64)
+        run: |
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+          dotnet publish src/ps2fpkg/ps2fpkg.csproj -c Release -r linux-musl-arm64 \
+            -p:PublishAot=true -p:InvariantGlobalization=true -p:StripSymbols=true \
+            -p:IlcOptimizationPreference=Size -o dist-aot
+          mkdir -p dist
+          cp dist-aot/ps2fpkg dist/ps2fpkg-linux-musl-arm64-aot
+          ( cd dist && sha256sum ps2fpkg-linux-musl-arm64-aot > SHA256SUMS-aot.txt )
+          file dist/ps2fpkg-linux-musl-arm64-aot || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aot-arm64
+          path: dist/ps2fpkg-linux-musl-arm64-aot
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ps2fpkg-linux-musl-arm64-aot
