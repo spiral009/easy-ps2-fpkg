@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Ps2Fpkg</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <LibOrbisCore Condition="'$(LibOrbisCore)'==''">$(MSBuildThisFileDirectory)../../.build/LibOrbisPkg/LibOrbisPkg.Core/LibOrbisPkg.Core.csproj</LibOrbisCore>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(LibOrbisCore)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.37.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

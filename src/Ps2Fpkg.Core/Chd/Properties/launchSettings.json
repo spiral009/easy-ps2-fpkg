@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "CHDReaderTest": {
+      "commandName": "Project",
+      "commandLineArgs": "\"\\\\10.0.4.11\\d$\\RomVaultCHD\\RomRoot\\Arcade - NonMAME CHDs\""
+    }
+  }
+}

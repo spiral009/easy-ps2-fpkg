@@ -9,6 +9,10 @@ ps2fpkg "God of War (USA).iso"
 # -> out/UP9000-SCUS97399_00-SCUS973990000001.pkg   (install it, done)
 ```
 
+## Android app
+
+There's also a **Material You** Android app (`src/ps2fpkg.android`) — tap-to-convert with chip-based options (emulator core, resolution, upscale, display mode, multitap), file/folder pickers, custom game icon & background, and a live log. Builds for **arm64-v8a (armv8)** and **armeabi-v7a (armv7)**. It runs the same `Ps2Fpkg.Core` engine as the CLI. Grab `ps2fpkg-android.apk` from [Releases](../../releases) (sideload; needs "All files access").
+
 ## Get it
 
 Grab the binary for your platform from [**Releases**](../../releases) and run it — it bundles its own runtime, nothing to install:
@@ -33,7 +37,7 @@ On **first run** it downloads the PS2 emulator assets once (~109 MB) and caches 
 
 ```text
 ps2fpkg <input> [options]
-    input               a .iso, or a .7z/.zip/.rar containing one
+    input               a .iso/.chd, or a .7z/.zip/.rar containing one
 
   -o, --out DIR         output directory          (default: out)
   -e, --emu NAME        emulator: "Jak v2" (default) or "Rogue v1"
@@ -139,3 +143,4 @@ This repository contains **only code**. It does **not** include or distribute th
 - [SvenGDK](https://github.com/SvenGDK/PS-Classics-fPKG-Builder) — PS-Classics-fPKG-Builder (emulator asset bundle + Linux recipe)
 - Jabu — original PS2-FPKG converter
 - [SharpCompress](https://github.com/adamhathcock/sharpcompress) — managed 7z/zip/rar/tar extraction
+- [RomVault/CHDSharpReference](https://github.com/RomVault/CHDSharpReference) (Apache-2.0) — managed CHD decoder (vendored in src/Ps2Fpkg.Core/Chd)

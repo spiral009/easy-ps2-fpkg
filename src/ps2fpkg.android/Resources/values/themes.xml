@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Material You: Material 3 + dynamic color (adapts to the device wallpaper palette on Android 12+). -->
+  <style name="AppTheme" parent="Theme.Material3.DynamicColors.DayNight">
+    <item name="android:statusBarColor">?attr/colorPrimaryContainer</item>
+    <item name="android:navigationBarColor">?attr/colorSurface</item>
+  </style>
+</resources>

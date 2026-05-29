@@ -7,20 +7,12 @@
     <RootNamespace>Ps2Fpkg</RootNamespace>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <InvariantGlobalization>true</InvariantGlobalization>
     <LangVersion>latest</LangVersion>
-    <!-- Path to the cloned+patched LibOrbisPkg.Core project. scripts/fetch-liborbispkg.sh
-         populates the default location; override with -p:LibOrbisCore=/path/...csproj -->
-    <LibOrbisCore Condition="'$(LibOrbisCore)'==''">$(MSBuildThisFileDirectory)../../.build/LibOrbisPkg/LibOrbisPkg.Core/LibOrbisPkg.Core.csproj</LibOrbisCore>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(LibOrbisCore)" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="SharpCompress" Version="0.37.2" />
+    <ProjectReference Include="../Ps2Fpkg.Core/Ps2Fpkg.Core.csproj" />
   </ItemGroup>
 
 </Project>

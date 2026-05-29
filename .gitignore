@@ -17,3 +17,6 @@
 *.zip
 *.rar
 *.gp4
+
+# QEMU test sysroot (local only)
+/sysroot-arm64/

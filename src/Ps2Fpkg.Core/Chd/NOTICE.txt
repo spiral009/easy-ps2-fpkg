@@ -1,0 +1,1 @@
+VENDORED from RomVault/CHDSharpReference (Apache-2.0). Modified: added CHDV5.Extract for ISO output; removed test Program.cs.
