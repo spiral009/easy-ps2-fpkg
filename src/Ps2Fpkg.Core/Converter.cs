@@ -24,6 +24,7 @@ namespace Ps2Fpkg
         public string Title;
         public string Uprender, Upscale, DisplayMode, Multitap, Lua, ConfigFile;
         public string IconPath, BackgroundPath;   // custom icon0.png / pic1.png for the game
+        public bool AutoArt;                       // fetch official box art (by serial) for icon0 + pic1
         public List<string> Set = new List<string>();
         public string AssetsDir;             // override; else cache dir
         public bool NoFetch, Keep, DumpConfig;
@@ -205,9 +206,11 @@ namespace Ps2Fpkg
             File.WriteAllText(cfg, string.Join("\n", lines) + "\n");
             if (o.DumpConfig) { log("Final config-emu-ps4.txt:"); foreach (var l in lines) log("    " + l); }
 
-            // Custom icon / background (recommended: icon0 512x512, background 1920x1080 PNG)
+            // Art: optionally fetch official box art by serial, then let any user-supplied art override.
             string sceSys = Path.Combine(proj, "sce_sys");
             Directory.CreateDirectory(sceSys);
+            if (o.AutoArt && (string.IsNullOrEmpty(o.IconPath) || string.IsNullOrEmpty(o.BackgroundPath)))
+                ArtFetcher.TryApply(dash, sceSys, log);
             if (!string.IsNullOrEmpty(o.IconPath) && File.Exists(o.IconPath))
             {
                 File.Copy(o.IconPath, Path.Combine(sceSys, "icon0.png"), true);

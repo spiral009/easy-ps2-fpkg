@@ -45,6 +45,7 @@ internal static class Program
                 case "--lua": o.Lua = Next(a, ref i); break;
                 case "--icon": o.IconPath = Next(a, ref i); break;
                 case "--bg": case "--background": o.BackgroundPath = Next(a, ref i); break;
+                case "--auto-art": o.AutoArt = true; break;
                 case "--config": o.ConfigFile = Next(a, ref i); break;
                 case "-D": case "--set": o.Set.Add(Next(a, ref i)); break;
                 case "--dump-config": o.DumpConfig = true; break;
@@ -82,6 +83,11 @@ Usage:
       --config FILE     use FILE as the base config-emu-ps4.txt
   -D, --set k=v         set ANY emulator flag (repeatable), e.g. -D gs-uprender=1x1
       --dump-config     print the final config-emu-ps4.txt before building
+
+ Cover art (home-screen icon & background):
+      --auto-art        fetch official box art by serial and use it as icon0 + pic1
+      --icon FILE       custom icon0.png (512x512); overrides --auto-art
+      --bg FILE         custom background pic1.png (1920x1080); overrides --auto-art
 
   Advanced:
       --assets DIR      use emulator assets in DIR (skip auto-download)

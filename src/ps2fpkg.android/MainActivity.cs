@@ -32,7 +32,7 @@ namespace Ps2FpkgAndroid
         TextView _log;
         ScrollView _logScroll;
         volatile bool _running;
-        Func<string> _emu, _uprender, _upscale, _display, _multitap;
+        Func<string> _emu, _uprender, _upscale, _display, _multitap, _autoArt;
 
         protected override void OnCreate(Bundle b)
         {
@@ -96,8 +96,12 @@ namespace Ps2FpkgAndroid
             _extra.InputType = Android.Text.InputTypes.TextFlagMultiLine | Android.Text.InputTypes.ClassText;
             c4.AddView(extraTil);
 
+            _autoArt = MakeChoice(c4, "Cover art",
+                "Use the game's official box art for the home-screen icon & background (downloaded by serial). Pick files below to override.",
+                new[] { ("Official cover", "1"), ("Emulator default", (string)null) }, 0);
+
             AddLabel(c4, "Custom art (optional)");
-            AddCaption(c4, "Icon (512×512 PNG) & background (1920×1080 PNG) shown on the console home screen.");
+            AddCaption(c4, "Override with your own icon (512×512 PNG) & background (1920×1080 PNG).");
             _iconBtn = new MaterialButton(this) { Text = "Pick game icon" };
             _iconBtn.Click += (s, e) => StartActivityForResult(ImageIntent(), PICK_ICON);
             c4.AddView(_iconBtn);
@@ -127,6 +131,10 @@ namespace Ps2FpkgAndroid
             _logScroll.LayoutParameters = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Dp(240));
             _log = new TextView(this) { Typeface = Android.Graphics.Typeface.Monospace, TextSize = 11 };
             _log.SetTextIsSelectable(true);
+            // Let the log scroll on its own instead of the parent page stealing the gesture.
+            _log.MovementMethod = Android.Text.Method.ScrollingMovementMethod.Instance;
+            _logScroll.NestedScrollingEnabled = true;
+            _logScroll.SetOnTouchListener(new GrabScroll());
             _logScroll.AddView(_log);
             root.AddView(_logScroll);
 
@@ -243,6 +251,7 @@ namespace Ps2FpkgAndroid
                 Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text.Trim(),
                 IconPath = _iconPath,
                 BackgroundPath = _bgPath,
+                AutoArt = _autoArt() == "1",
                 DumpConfig = true,
             };
             foreach (var raw in (_extra.Text ?? "").Split('\n'))
@@ -332,5 +341,17 @@ namespace Ps2FpkgAndroid
         { var tv = new TextView(this) { Text = t, TextSize = 14 }; tv.SetPadding(0, Dp(10), 0, 0); tv.SetTypeface(null, Android.Graphics.TypefaceStyle.Bold); root.AddView(tv); }
         void AddCaption(LinearLayout root, string t)
         { var tv = new TextView(this) { Text = t, TextSize = 11 }; tv.Alpha = 0.7f; tv.SetPadding(0, Dp(1), 0, Dp(2)); root.AddView(tv); }
+
+        // Makes a child scroll view win the touch gesture from the outer page ScrollView.
+        class GrabScroll : Java.Lang.Object, View.IOnTouchListener
+        {
+            public bool OnTouch(View v, MotionEvent e)
+            {
+                v.Parent?.RequestDisallowInterceptTouchEvent(true);
+                if (e.Action == MotionEventActions.Up || e.Action == MotionEventActions.Cancel)
+                    v.Parent?.RequestDisallowInterceptTouchEvent(false);
+                return false;
+            }
+        }
     }
 }
