@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Android.App;
 using Android.Content;
@@ -26,6 +27,7 @@ namespace Ps2FpkgAndroid
         const int PICK_ICON = 103;
         const int PICK_BG = 104;
         string _iconPath, _bgPath;
+        Android.Net.Uri _pendingInputUri;   // set when a picked game file couldn't be resolved to a path (import on Convert)
         MaterialButton _iconBtn, _bgBtn;
         TextInputEditText _input, _out, _title, _extra;
         MaterialButton _convert, _pick, _perm;
@@ -57,7 +59,7 @@ namespace Ps2FpkgAndroid
             var inputTil = NewField(out _input, "/sdcard/Download/Game.iso");
             inputTil.LayoutParameters = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f);
             _pick = new MaterialButton(this) { Text = "Pick" };
-            _pick.Click += (s, e) => PickFile();
+            _pick.Click += (s, e) => PickDoc(PICK_FILE, "*/*");
             inputRow.AddView(inputTil); inputRow.AddView(_pick);
             c1.AddView(inputRow);
 
@@ -103,10 +105,10 @@ namespace Ps2FpkgAndroid
             AddLabel(c4, "Custom art (optional)");
             AddCaption(c4, "Override with your own icon (512×512 PNG) & background (1920×1080 PNG).");
             _iconBtn = new MaterialButton(this) { Text = "Pick game icon" };
-            _iconBtn.Click += (s, e) => StartActivityForResult(ImageIntent(), PICK_ICON);
+            _iconBtn.Click += (s, e) => PickDoc(PICK_ICON, "image/*");
             c4.AddView(_iconBtn);
             _bgBtn = new MaterialButton(this) { Text = "Pick background" };
-            _bgBtn.Click += (s, e) => StartActivityForResult(ImageIntent(), PICK_BG);
+            _bgBtn.Click += (s, e) => PickDoc(PICK_BG, "image/*");
             c4.AddView(_bgBtn);
 
             var outRow = new LinearLayout(this) { Orientation = Orientation.Horizontal };
@@ -114,7 +116,7 @@ namespace Ps2FpkgAndroid
             var outTil = NewField(out _out, "/sdcard/Download/ps2fpkg", "Output folder", "/sdcard/Download/ps2fpkg");
             outTil.LayoutParameters = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f);
             var pickDir = new MaterialButton(this) { Text = "Pick" };
-            pickDir.Click += (s, e) => PickDir();
+            pickDir.Click += (s, e) => { try { StartActivityForResult(new Intent(Intent.ActionOpenDocumentTree), PICK_DIR); } catch { } };
             outRow.AddView(outTil); outRow.AddView(pickDir);
             c4.AddView(outRow);
             root.AddView(card4);
@@ -161,69 +163,180 @@ namespace Ps2FpkgAndroid
             catch { StartActivity(new Intent(Settings.ActionManageAllFilesAccessPermission)); }
         }
 
-        // ---- file picker ----
-        void PickFile()
+        // ---- system file picker (SAF) with robust content-URI -> path resolution ----
+        void PickDoc(int code, string mime)
         {
             var i = new Intent(Intent.ActionOpenDocument);
             i.AddCategory(Intent.CategoryOpenable);
-            i.SetType("*/*");
-            StartActivityForResult(i, PICK_FILE);
-        }
-        void PickDir() => StartActivityForResult(new Intent(Intent.ActionOpenDocumentTree), PICK_DIR);
-        Intent ImageIntent()
-        {
-            var i = new Intent(Intent.ActionOpenDocument);
-            i.AddCategory(Intent.CategoryOpenable);
-            i.SetType("image/*");
-            return i;
+            i.SetType(mime);
+            if (mime == "*/*") // let users see archives/iso even if a default filter would hide them
+                i.PutExtra(Intent.ExtraMimeTypes, new[] { "application/octet-stream", "application/x-iso9660-image", "application/zip", "application/x-7z-compressed", "*/*" });
+            try { StartActivityForResult(i, code); }
+            catch { Toast.MakeText(this, "No file picker app available.", ToastLength.Long).Show(); }
         }
 
         protected override void OnActivityResult(int req, Result res, Intent data)
         {
             base.OnActivityResult(req, res, data);
             if (res != Result.Ok || data?.Data == null) return;
+            var uri = data.Data;
             if (req == PICK_FILE)
             {
-                string path = ResolvePath(data.Data);
-                if (path != null) _input.Text = path;
-                else Toast.MakeText(this, "Couldn't resolve a path — type it manually.", ToastLength.Long).Show();
+                string path = ResolveDocPath(uri) ?? QuickFind(uri);
+                if (path != null) { _pendingInputUri = null; _input.Text = path; }
+                else { _pendingInputUri = uri; _input.Text = DisplayName(uri); Toast.MakeText(this, "Selected: " + DisplayName(uri), ToastLength.Short).Show(); }
             }
             else if (req == PICK_DIR)
             {
-                string path = ResolveTreePath(data.Data);
+                string path = ResolveTreePath(uri);
                 if (path != null) _out.Text = path;
-                else Toast.MakeText(this, "Couldn't resolve that folder — type the path manually.", ToastLength.Long).Show();
+                else Toast.MakeText(this, "Couldn't use that folder; keeping " + _out.Text, ToastLength.Long).Show();
             }
             else if (req == PICK_ICON || req == PICK_BG)
             {
-                string path = ResolvePath(data.Data);
-                if (path == null) { Toast.MakeText(this, "Couldn't resolve that image path.", ToastLength.Long).Show(); return; }
-                if (req == PICK_ICON) { _iconPath = path; _iconBtn.Text = "Icon: " + Path.GetFileName(path) + " ✓"; }
-                else { _bgPath = path; _bgBtn.Text = "Background: " + Path.GetFileName(path) + " ✓"; }
+                try
+                {
+                    string path = CopyUriToCache(uri, (req == PICK_ICON ? "icon_" : "bg_") + DisplayName(uri));
+                    if (req == PICK_ICON) { _iconPath = path; _iconBtn.Text = "Icon: " + DisplayName(uri) + " ✓"; }
+                    else { _bgPath = path; _bgBtn.Text = "Background: " + DisplayName(uri) + " ✓"; }
+                }
+                catch (Exception ex) { Toast.MakeText(this, "Couldn't read image: " + ex.Message, ToastLength.Long).Show(); }
             }
         }
-        string ResolveTreePath(Android.Net.Uri uri)
+
+        // Map a document content-URI to a real filesystem path across the common providers.
+        string ResolveDocPath(Android.Net.Uri uri)
         {
             try
             {
-                string id = DocumentsContract.GetTreeDocumentId(uri); // e.g. "primary:Download"
-                int c = id.IndexOf(':');
-                if (c >= 0 && id.Substring(0, c).Equals("primary", StringComparison.OrdinalIgnoreCase))
-                    return Path.Combine(Android.OS.Environment.ExternalStorageDirectory.AbsolutePath, id.Substring(c + 1));
+                if (uri.Scheme == "file") return uri.Path;
+                if (DocumentsContract.IsDocumentUri(this, uri))
+                {
+                    string id = DocumentsContract.GetDocumentId(uri);
+                    string auth = uri.Authority ?? "";
+                    if (auth == "com.android.externalstorage.documents")
+                    {
+                        int c = id.IndexOf(':');
+                        string vol = c >= 0 ? id.Substring(0, c) : id, rel = c >= 0 ? id.Substring(c + 1) : "";
+                        if (vol.Equals("primary", StringComparison.OrdinalIgnoreCase))
+                            return Path.Combine(Android.OS.Environment.ExternalStorageDirectory.AbsolutePath, rel);
+                        return "/storage/" + vol + "/" + rel; // SD / USB
+                    }
+                    if (auth == "com.android.providers.downloads.documents")
+                    {
+                        if (id.StartsWith("raw:")) return id.Substring(4);
+                        if (id.StartsWith("msf:")) id = id.Substring(4);
+                        if (long.TryParse(id, out long did))
+                        {
+                            var u = ContentUris.WithAppendedId(Android.Net.Uri.Parse("content://downloads/public_downloads"), did);
+                            return QueryData(u, null, null) ?? QueryData(uri, null, null);
+                        }
+                        return QueryData(uri, null, null);
+                    }
+                    if (auth == "com.android.providers.media.documents")
+                    {
+                        int c = id.IndexOf(':');
+                        string type = c >= 0 ? id.Substring(0, c) : "", mid = c >= 0 ? id.Substring(c + 1) : id;
+                        Android.Net.Uri cu = type == "image" ? MediaStore.Images.Media.ExternalContentUri
+                            : type == "video" ? MediaStore.Video.Media.ExternalContentUri
+                            : type == "audio" ? MediaStore.Audio.Media.ExternalContentUri
+                            : MediaStore.Files.GetContentUri("external");
+                        return QueryData(cu, "_id=?", new[] { mid });
+                    }
+                }
+                if (uri.Scheme == "content") return QueryData(uri, null, null);
             }
             catch { }
             return null;
         }
-        string ResolvePath(Android.Net.Uri uri)
+
+        string ResolveTreePath(Android.Net.Uri uri)
         {
             try
             {
-                if (DocumentsContract.IsDocumentUri(this, uri))
+                string id = DocumentsContract.GetTreeDocumentId(uri);
+                int c = id.IndexOf(':');
+                string vol = c >= 0 ? id.Substring(0, c) : id, rel = c >= 0 ? id.Substring(c + 1) : "";
+                if (vol.Equals("primary", StringComparison.OrdinalIgnoreCase))
+                    return Path.Combine(Android.OS.Environment.ExternalStorageDirectory.AbsolutePath, rel);
+                return "/storage/" + vol + "/" + rel;
+            }
+            catch { return null; }
+        }
+
+        string QueryData(Android.Net.Uri uri, string sel, string[] args)
+        {
+            try
+            {
+                using var cur = ContentResolver.Query(uri, new[] { "_data" }, sel, args, null);
+                if (cur != null && cur.MoveToFirst())
                 {
-                    string id = DocumentsContract.GetDocumentId(uri);
-                    int c = id.IndexOf(':');
-                    if (c > 0 && id.Substring(0, c).Equals("primary", StringComparison.OrdinalIgnoreCase))
-                        return Path.Combine(Android.OS.Environment.ExternalStorageDirectory.AbsolutePath, id.Substring(c + 1));
+                    int idx = cur.GetColumnIndex("_data");
+                    if (idx >= 0) { string p = cur.GetString(idx); if (!string.IsNullOrEmpty(p) && File.Exists(p)) return p; }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        string DisplayName(Android.Net.Uri uri)
+        {
+            try
+            {
+                using var cur = ContentResolver.Query(uri, new[] { Android.Provider.OpenableColumns.DisplayName }, null, null, null);
+                if (cur != null && cur.MoveToFirst()) { string n = cur.GetString(0); if (!string.IsNullOrEmpty(n)) return n; }
+            }
+            catch { }
+            return Path.GetFileName(uri.Path ?? "file");
+        }
+
+        string CopyUriToCache(Android.Net.Uri uri, string name)
+        {
+            string dest = Path.Combine(CacheDir.AbsolutePath, name);
+            using (var ins = ContentResolver.OpenInputStream(uri))
+            using (var outs = File.Create(dest))
+                ins.CopyTo(outs, 1 << 20);
+            return dest;
+        }
+
+        long QuerySize(Android.Net.Uri uri)
+        {
+            try { using var c = ContentResolver.Query(uri, new[] { Android.Provider.OpenableColumns.Size }, null, null, null); if (c != null && c.MoveToFirst() && !c.IsNull(0)) return c.GetLong(0); }
+            catch { }
+            return -1;
+        }
+        static string MatchInDir(string dir, string name, long size, bool recursive)
+        {
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
+                    if (Path.GetFileName(f).Equals(name, StringComparison.OrdinalIgnoreCase) && (size <= 0 || new FileInfo(f).Length == size))
+                        return f;
+            }
+            catch { }
+            return null;
+        }
+        // Fast: only the likely folders, top level (instant).
+        string QuickFind(Android.Net.Uri uri)
+        {
+            string name = DisplayName(uri); long size = QuerySize(uri);
+            string root = Android.OS.Environment.ExternalStorageDirectory.AbsolutePath;
+            foreach (var d in new[] { Path.Combine(root, "Download"), Path.Combine(root, "Downloads"), root })
+            { var h = MatchInDir(d, name, size, false); if (h != null) return h; }
+            return null;
+        }
+        // Thorough: quick folders, then a recursive sweep skipping the huge Android/ tree.
+        string DeepFind(Android.Net.Uri uri)
+        {
+            var q = QuickFind(uri); if (q != null) return q;
+            string name = DisplayName(uri); long size = QuerySize(uri);
+            string root = Android.OS.Environment.ExternalStorageDirectory.AbsolutePath;
+            try
+            {
+                foreach (var sub in Directory.EnumerateDirectories(root))
+                {
+                    if (Path.GetFileName(sub).Equals("Android", StringComparison.OrdinalIgnoreCase)) continue;
+                    var h = MatchInDir(sub, name, size, true); if (h != null) return h;
                 }
             }
             catch { }
@@ -235,13 +348,13 @@ namespace Ps2FpkgAndroid
         {
             if (_running) return;
             if (!HasAllFiles()) { Toast.MakeText(this, "Grant All files access first.", ToastLength.Long).Show(); return; }
-            string input = _input.Text?.Trim();
-            if (string.IsNullOrEmpty(input) || !File.Exists(input))
-            { Toast.MakeText(this, "Pick or type a valid game file path.", ToastLength.Long).Show(); return; }
+            string typed = _input.Text?.Trim();
+            var pending = _pendingInputUri;
+            if (pending == null && (string.IsNullOrEmpty(typed) || !File.Exists(typed)))
+            { Toast.MakeText(this, "Pick a game file first.", ToastLength.Long).Show(); return; }
 
             var o = new ConvertOptions
             {
-                Input = input,
                 Out = string.IsNullOrWhiteSpace(_out.Text) ? "/sdcard/Download/ps2fpkg" : _out.Text.Trim(),
                 Emu = _emu() ?? "Jak v2",
                 Uprender = _uprender(),
@@ -263,6 +376,15 @@ namespace Ps2FpkgAndroid
             {
                 try
                 {
+                    if (pending != null)
+                    {
+                        string nm = DisplayName(pending);
+                        Log("Locating " + nm + " on storage...");
+                        string found = DeepFind(pending);
+                        if (found != null) { Log("Found: " + found); o.Input = found; }
+                        else { Log("Not found on disk — importing a copy (this can take a while)..."); o.Input = CopyUriToCache(pending, nm); }
+                    }
+                    else o.Input = typed;
                     var r = Converter.Run(o, Log);
                     Log(""); Log($"DONE ✅  ({r.Checks}/{r.Checks} checks OK)");
                     Log("PKG    : " + r.PkgPath);
