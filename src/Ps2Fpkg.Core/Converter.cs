@@ -25,6 +25,7 @@ namespace Ps2Fpkg
         public string Uprender, Upscale, DisplayMode, Multitap, Lua, ConfigFile;
         public string IconPath, BackgroundPath;   // custom icon0.png / pic1.png for the game
         public bool AutoArt;                       // fetch official box art (by serial) for icon0 + pic1
+        public int MaxThreads;                     // cap parallelism to reduce heat (0 = all cores)
         public List<string> Set = new List<string>();
         public string AssetsDir;             // override; else cache dir
         public bool NoFetch, Keep, DumpConfig;
@@ -48,6 +49,12 @@ namespace Ps2Fpkg
         public static ConvertResult Run(ConvertOptions o, Action<string> log)
         {
             log = log ?? (_ => { });
+            // Reset any leftover pause and apply the initial core cap. The packer's parallel
+            // loops route through Ps2FpkgThrottle, so cores/pause can also be changed live.
+            Ps2FpkgThrottle.Resume();
+            Ps2FpkgThrottle.SetCores(o.MaxThreads);
+            if (o.MaxThreads > 0)
+                log($"Throttle: up to {Math.Min(o.MaxThreads, Environment.ProcessorCount)}/{Environment.ProcessorCount} cores (cooler, slower).");
             string assets = ResolveAssets(o, log);
             string emuDir = Path.Combine(assets, "emus", o.Emu);
             if (!Directory.Exists(emuDir))

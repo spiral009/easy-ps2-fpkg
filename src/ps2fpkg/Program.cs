@@ -47,6 +47,7 @@ internal static class Program
                 case "--bg": case "--background": o.BackgroundPath = Next(a, ref i); break;
                 case "--auto-art": o.AutoArt = true; break;
                 case "--config": o.ConfigFile = Next(a, ref i); break;
+                case "--threads": o.MaxThreads = int.Parse(Next(a, ref i)); break;
                 case "-D": case "--set": o.Set.Add(Next(a, ref i)); break;
                 case "--dump-config": o.DumpConfig = true; break;
                 case "--assets": o.AssetsDir = Next(a, ref i); break;

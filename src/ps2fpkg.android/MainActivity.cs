@@ -34,7 +34,11 @@ namespace Ps2FpkgAndroid
         TextView _log;
         ScrollView _logScroll;
         volatile bool _running;
-        Func<string> _emu, _uprender, _upscale, _display, _multitap, _autoArt;
+        volatile bool _autoThermal;
+        int _cores;
+        MaterialButton _pauseBtn;
+        PowerManager.WakeLock _wake;
+        Func<string> _emu, _uprender, _upscale, _display, _multitap, _autoArt, _speed;
 
         protected override void OnCreate(Bundle b)
         {
@@ -89,6 +93,15 @@ namespace Ps2FpkgAndroid
                 new[] { ("Off", null), ("Port 1", "1"), ("Port 2", "2"), ("Both", "both") }, 0);
             root.AddView(card3);
 
+            // ---- performance & heat card ----
+            var card35 = NewCard(); var c35 = CardBody(card35);
+            _cores = Java.Lang.Runtime.GetRuntime().AvailableProcessors();
+            _speed = MakeChoice(c35, "Conversion speed (heat)",
+                $"Packing maxes the CPU and warms the phone — plug in for big games. Auto adapts to temperature. You can change this mid-convert. (Device: {_cores} cores.)",
+                new[] { ("Auto", "auto"), ("Full", "full"), ("Balanced", "bal"), ("Cool", "cool") }, 0,
+                onChanged: () => ApplySpeed(live: true));
+            root.AddView(card35);
+
             // ---- advanced card ----
             var card4 = NewCard(); var c4 = CardBody(card4);
             AddLabel(c4, "Advanced (optional)");
@@ -127,6 +140,11 @@ namespace Ps2FpkgAndroid
             _convert.LayoutParameters = cp;
             _convert.Click += (s, e) => StartConvert();
             root.AddView(_convert);
+
+            _pauseBtn = new MaterialButton(this) { Text = "Pause", Visibility = ViewStates.Gone };
+            _pauseBtn.LayoutParameters = cp;
+            _pauseBtn.Click += (s, e) => TogglePause();
+            root.AddView(_pauseBtn);
 
             AddLabel(root, "Log");
             _logScroll = new ScrollView(this);
@@ -367,11 +385,17 @@ namespace Ps2FpkgAndroid
                 AutoArt = _autoArt() == "1",
                 DumpConfig = true,
             };
+            string speed = _speed();
+            _autoThermal = speed == "auto";
+            o.MaxThreads = CoresFor(speed);
             foreach (var raw in (_extra.Text ?? "").Split('\n'))
             { var line = raw.Trim(); if (line.Length > 0) o.Set.Add(line); }
 
             _log.Text = "";
             _running = true; _convert.Enabled = false; _convert.Text = "Converting…";
+            AcquireWake();
+            _pauseBtn.Text = "Pause"; _pauseBtn.Visibility = ViewStates.Visible;
+            var thermal = StartThermalWatch();
             new Thread(() =>
             {
                 try
@@ -394,8 +418,91 @@ namespace Ps2FpkgAndroid
                     RunOnUiThread(() => Toast.MakeText(this, "Done — pkg saved.", ToastLength.Long).Show());
                 }
                 catch (Exception ex) { Log(""); Log("ERROR: " + ex.Message); }
-                finally { _running = false; RunOnUiThread(() => { _convert.Enabled = true; _convert.Text = "Convert"; }); }
+                finally
+                {
+                    thermal.Set(); Ps2FpkgThrottle.Resume(); ReleaseWake(); _running = false;
+                    RunOnUiThread(() => { _convert.Enabled = true; _convert.Text = "Convert"; _pauseBtn.Visibility = ViewStates.Gone; });
+                }
             }) { IsBackground = true }.Start();
+        }
+
+        // ---- live throttle / pause / wakelock ----
+        int CoresFor(string sel) => sel switch
+        {
+            "full" => 0,                          // all cores
+            "cool" => Math.Max(1, _cores / 4),
+            _ => Math.Max(2, _cores / 2),         // balanced / auto start
+        };
+
+        void ApplySpeed(bool live)
+        {
+            string sel = _speed();
+            _autoThermal = sel == "auto";
+            if (!live || !_running) return;
+            Ps2FpkgThrottle.Resume();             // changing speed un-pauses
+            Ps2FpkgThrottle.SetCores(CoresFor(sel));
+            _pauseBtn.Text = "Pause";
+            Log($"⚙ speed → {sel}" + (_autoThermal ? " (adapts to temperature)" : ""));
+        }
+
+        void TogglePause()
+        {
+            if (!_running) return;
+            if (Ps2FpkgThrottle.IsPaused) { Ps2FpkgThrottle.Resume(); _pauseBtn.Text = "Pause"; Log("▶ resumed"); }
+            else { Ps2FpkgThrottle.Pause(); _pauseBtn.Text = "Resume"; Log("⏸ paused — CPU idle; tap Resume to continue"); }
+        }
+
+        void AcquireWake()
+        {
+            try
+            {
+                var pm = (PowerManager)GetSystemService(PowerService);
+                _wake = pm.NewWakeLock(WakeLockFlags.Partial, "ps2fpkg:convert");
+                _wake.SetReferenceCounted(false);
+                _wake.Acquire();
+            }
+            catch { }
+        }
+        void ReleaseWake() { try { if (_wake != null && _wake.IsHeld) _wake.Release(); } catch { } }
+
+        // Watches device thermal state during a conversion and logs when it heats up.
+        System.Threading.ManualResetEvent StartThermalWatch()
+        {
+            var stop = new System.Threading.ManualResetEvent(false);
+            if (Build.VERSION.SdkInt < BuildVersionCodes.Q) return stop;
+            var pm = (PowerManager)GetSystemService(PowerService);
+            string[] names = { "normal", "light", "moderate", "SEVERE", "CRITICAL", "EMERGENCY", "SHUTDOWN" };
+            new Thread(() =>
+            {
+                int last = -1;
+                while (!stop.WaitOne(4000))
+                {
+                    try
+                    {
+                        int s = (int)pm.CurrentThermalStatus;
+                        if (s != last)
+                        {
+                            if (s >= 2 && s < names.Length) Log($"🌡 device is {names[s]}{(_autoThermal ? "" : (s >= 3 ? " — consider 'Cool' or pause" : ""))}");
+                            else if (s < 2 && last >= 2) Log("🌡 device cooled down");
+
+                            if (_autoThermal)
+                            {
+                                if (s >= 4) { Ps2FpkgThrottle.Pause(); RunOnUiThread(() => _pauseBtn.Text = "Resume"); Log("🌡 auto-paused (too hot) — resumes when it cools"); }
+                                else
+                                {
+                                    Ps2FpkgThrottle.Resume(); RunOnUiThread(() => _pauseBtn.Text = "Pause");
+                                    int n = s >= 3 ? Math.Max(1, _cores / 4) : Math.Max(2, _cores / 2);
+                                    Ps2FpkgThrottle.SetCores(n);
+                                    if (s >= 2) Log($"🌡 auto-throttled to {n} cores");
+                                }
+                            }
+                            last = s;
+                        }
+                    }
+                    catch { }
+                }
+            }) { IsBackground = true }.Start();
+            return stop;
         }
 
         void Log(string line) => RunOnUiThread(() =>
@@ -405,7 +512,7 @@ namespace Ps2FpkgAndroid
         });
 
         // ---- a single-choice chip group with a caption; returns the selected value ----
-        Func<string> MakeChoice(LinearLayout parent, string label, string caption, (string label, string val)[] opts, int def)
+        Func<string> MakeChoice(LinearLayout parent, string label, string caption, (string label, string val)[] opts, int def, Action onChanged = null)
         {
             AddLabel(parent, label);
             AddCaption(parent, caption);
@@ -416,6 +523,7 @@ namespace Ps2FpkgAndroid
                 var chip = new Chip(this) { Text = opts[i].label, Checkable = true, CheckedIconVisible = true };
                 chip.Id = View.GenerateViewId();
                 map[chip.Id] = opts[i].val;
+                if (onChanged != null) chip.CheckedChange += (s, e) => { if (e.IsChecked) onChanged(); };
                 grp.AddView(chip);
                 if (i == def) chip.Checked = true;
             }
